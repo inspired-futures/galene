@@ -1,7 +1,9 @@
 *~
 data/*.pem
 galene
+galene.exe
 galene-password-generator/galene-password-generator
 passwd
 groups/*.json
 static/*.d.ts
+go.mod
