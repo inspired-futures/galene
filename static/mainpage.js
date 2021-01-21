@@ -24,7 +24,7 @@ document.getElementById('groupform').onsubmit = function(e) {
     e.preventDefault();
     let group = document.getElementById('group').value.trim();
     if(group !== '')
-        location.href = '/group/' + group;
+        location.href = '/galene/group/' + group;   // BAO
 };
 
 async function listPublicGroups() {
@@ -33,7 +33,7 @@ async function listPublicGroups() {
 
     let l;
     try {
-        l = await (await fetch('/public-groups.json')).json();
+        l = await (await fetch('/galene/public-groups.json')).json(); // BAO
     } catch(e) {
         console.error(e);
         l = [];
@@ -55,7 +55,7 @@ async function listPublicGroups() {
         let td = document.createElement('td');
         let a = document.createElement('a');
         a.textContent = group.name;
-        a.href = '/group/' + encodeURIComponent(group.name);
+        a.href = '/galene/group/' + encodeURIComponent(group.name); // BAO
         td.appendChild(a);
         tr.appendChild(td);
         let td2 = document.createElement('td');

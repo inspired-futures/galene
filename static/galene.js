@@ -2631,7 +2631,8 @@ async function serverConnect() {
     serverConnection.onchat = addToChatbox;
     serverConnection.onusermessage = gotUserMessage;
 
-    let url = `ws${location.protocol === 'https:' ? 's' : ''}://${location.host}/ws`;
+    let url = `ws${location.protocol === 'https:' ? 's' : ''}://${location.host}/galene-ws/`; // BAO
+
     try {
         await serverConnection.connect(url);
     } catch(e) {
@@ -2641,7 +2642,7 @@ async function serverConnect() {
 }
 
 function start() {
-    group = decodeURIComponent(location.pathname.replace(/^\/[a-z]*\//, ''));
+    group = decodeURIComponent(location.pathname.replace(/^\/[a-z]*\/[a-z]*\//, '')); // BAO
     let title = group.charAt(0).toUpperCase() + group.slice(1);
     if(group !== '') {
         document.title = title;
