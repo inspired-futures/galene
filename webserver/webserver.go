@@ -3,6 +3,7 @@ package webserver
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,6 +56,13 @@ func Serve(address string, dataDir string) error {
 		ReadHeaderTimeout: 60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	if !Insecure {
+		s.TLSConfig = &tls.Config{
+			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+				return getCertificate(dataDir)
+			},
+		}
+	}
 	s.RegisterOnShutdown(func() {
 		group.Range(func(g *group.Group) bool {
 			go g.Shutdown("server is shutting down")
@@ -67,10 +75,7 @@ func Serve(address string, dataDir string) error {
 	var err error
 
 	if !Insecure {
-		err = s.ListenAndServeTLS(
-			filepath.Join(dataDir, "cert.pem"),
-			filepath.Join(dataDir, "key.pem"),
-		)
+		err = s.ListenAndServeTLS("", "")
 	} else {
 		err = s.ListenAndServe()
 	}
@@ -242,20 +247,23 @@ func serveFile(w http.ResponseWriter, r *http.Request, p string) {
 	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
 }
 
-func parseGroupName(path string) string {
-	if !strings.HasPrefix(path, "/group/") {
+func parseGroupName(prefix string, p string) string {
+	if !strings.HasPrefix(p, prefix) {
 		return ""
 	}
 
-	name := path[len("/group/"):]
+	name := p[len("/group/"):]
 	if name == "" {
 		return ""
 	}
 
-	if name[len(name)-1] == '/' {
-		name = name[:len(name)-1]
+	if filepath.Separator != '/' &&
+		strings.ContainsRune(name, filepath.Separator) {
+		return ""
 	}
-	return name
+
+	name = path.Clean("/" + name)
+	return name[1:]
 }
 
 func groupHandler(w http.ResponseWriter, r *http.Request) {
@@ -264,14 +272,14 @@ func groupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mungeHeader(w)
-	name := parseGroupName(r.URL.Path)
+	name := parseGroupName("/group/", r.URL.Path)
 	if name == "" {
 		notFound(w)
 		return
 	}
 
-	if strings.HasSuffix(r.URL.Path, "/") {
-		http.Redirect(w, r, r.URL.Path[:len(r.URL.Path)-1],
+	if r.URL.Path != "/group/"+name {
+		http.Redirect(w, r, "/group/"+name,
 			http.StatusPermanentRedirect)
 		return
 	}
@@ -430,7 +438,7 @@ func statsHandler(w http.ResponseWriter, r *http.Request, dataDir string) {
 	fmt.Fprintf(w, "</body></html>\n")
 }
 
-var wsUpgrader = websocket.Upgrader {
+var wsUpgrader = websocket.Upgrader{
 	HandshakeTimeout: 30 * time.Second,
 }
 

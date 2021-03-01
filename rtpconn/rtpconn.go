@@ -78,6 +78,7 @@ type downTrackAtomics struct {
 
 type rtpDownTrack struct {
 	track      *webrtc.TrackLocalStaticRTP
+	sender     *webrtc.RTPSender
 	remote     conn.UpTrack
 	ssrc       webrtc.SSRC
 	maxBitrate *bitrate
@@ -143,8 +144,8 @@ type rtpDownConnection struct {
 	iceCandidates     []*webrtc.ICECandidateInit
 	negotiationNeeded int
 
-	mu sync.Mutex
-	tracks            []*rtpDownTrack
+	mu     sync.Mutex
+	tracks []*rtpDownTrack
 }
 
 func (down *rtpDownConnection) getTracks() []*rtpDownTrack {
@@ -156,7 +157,7 @@ func (down *rtpDownConnection) getTracks() []*rtpDownTrack {
 }
 
 func newDownConn(c group.Client, id string, remote conn.Up) (*rtpDownConnection, error) {
-	api := group.APIFromCodecs(remote.Codecs())
+	api := c.Group().API()
 	pc, err := api.NewPeerConnection(*ice.ICEConfiguration())
 	if err != nil {
 		return nil, err
@@ -333,10 +334,11 @@ type rtpUpConnection struct {
 	labels        map[string]string
 	iceCandidates []*webrtc.ICECandidateInit
 
-	mu     sync.Mutex
-	pushed bool
-	tracks []*rtpUpTrack
-	local  []conn.Down
+	mu      sync.Mutex
+	pushed  bool
+	replace string
+	tracks  []*rtpUpTrack
+	local   []conn.Down
 }
 
 func (up *rtpUpConnection) getTracks() []*rtpUpTrack {
@@ -347,23 +349,22 @@ func (up *rtpUpConnection) getTracks() []*rtpUpTrack {
 	return tracks
 }
 
+func (up *rtpUpConnection) getReplace(reset bool) string {
+	up.mu.Lock()
+	defer up.mu.Unlock()
+	replace := up.replace
+	if reset {
+		up.replace = ""
+	}
+	return replace
+}
+
 func (up *rtpUpConnection) Id() string {
 	return up.id
 }
 
 func (up *rtpUpConnection) User() (string, string) {
 	return up.userId, up.username
-}
-
-func (up *rtpUpConnection) Codecs() []webrtc.RTPCodecCapability {
-	up.mu.Lock()
-	defer up.mu.Unlock()
-
-	codecs := make([]webrtc.RTPCodecCapability, len(up.tracks))
-	for i := range up.tracks {
-		codecs[i] = up.tracks[i].Codec()
-	}
-	return codecs
 }
 
 func (up *rtpUpConnection) AddLocal(local conn.Down) error {
@@ -443,6 +444,8 @@ func (up *rtpUpConnection) complete() bool {
 func pushConnNow(up *rtpUpConnection, g *group.Group, cs []group.Client) {
 	up.mu.Lock()
 	up.pushed = true
+	replace := up.replace
+	up.replace = ""
 	tracks := make([]conn.UpTrack, len(up.tracks))
 	for i, t := range up.tracks {
 		tracks[i] = t
@@ -450,23 +453,24 @@ func pushConnNow(up *rtpUpConnection, g *group.Group, cs []group.Client) {
 	up.mu.Unlock()
 
 	for _, c := range cs {
-		c.PushConn(g, up.id, up, tracks)
+		c.PushConn(g, up.id, up, tracks, replace)
 	}
 }
 
 // pushConn schedules a call to pushConnNow
 func pushConn(up *rtpUpConnection, g *group.Group, cs []group.Client) {
+	up.mu.Lock()
 	if up.complete() {
+		up.mu.Unlock()
 		pushConnNow(up, g, cs)
 		return
 	}
 
-	up.mu.Lock()
 	up.pushed = false
 	up.mu.Unlock()
 
 	go func(g *group.Group, cs []group.Client) {
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(4 * time.Second)
 		up.mu.Lock()
 		pushed := up.pushed
 		up.pushed = true
@@ -726,7 +730,7 @@ func rtcpUpListener(conn *rtpUpConnection, track *rtpUpTrack, r *webrtc.RTPRecei
 		firstSR := false
 		n, _, err := r.Read(buf)
 		if err != nil {
-			if err != io.EOF {
+			if err != io.EOF && err != io.ErrClosedPipe {
 				log.Printf("Read RTCP: %v", err)
 			}
 			return
@@ -1012,7 +1016,7 @@ func rtcpDownListener(conn *rtpDownConnection, track *rtpDownTrack, s *webrtc.RT
 	for {
 		n, _, err := s.Read(buf)
 		if err != nil {
-			if err != io.EOF {
+			if err != io.EOF && err != io.ErrClosedPipe {
 				log.Printf("Read RTCP: %v", err)
 			}
 			return
